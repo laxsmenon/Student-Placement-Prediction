@@ -259,3 +259,126 @@ To commit and push your completed MLOps project to GitHub:
    ```powershell
    git push origin main
    ```
+
+# 📊 MLflow Experiment Tracking & Management Guide
+
+This document outlines how the basic student placement model training script was upgraded into a production-grade, tracked MLOps experiment pipeline using **MLflow** and a **SQLite backend database**.
+
+---
+
+## 🛠️ Key Architectural Enhancements
+
+1. **Persistent SQLite Backend Store (`mlflow.db`)**: 
+   - Instead of tracking runs in a volatile local folder, the tracking URI is explicitly configured to use a local SQLite database (`sqlite:///mlflow.db`). This ensures that experiment metadata, parameters, and metrics are saved persistently and remain accessible across sessions.
+2. **Train-Test Evaluation Split**: 
+   - The dataset is split into training and testing sets using `train_test_split` (with a 20% test split), allowing proper evaluation via `accuracy_score` rather than evaluating on the training set.
+3. **Artifact Logging & Security Compliance (`skops`)**: 
+   - Trained model binaries are saved locally (`models/model.pkl`) for real-time FastAPI inference and logged directly as MLflow artifacts. 
+   - Modern security constraints regarding scikit-learn tree structures (`sklearn.tree._tree.Tree`) are addressed by supplying `skops_trusted_types=["sklearn.tree._tree.Tree"]` during artifact logging.
+
+---
+
+## 💻 Code Implementation: `src/models/train_model.py`
+
+Below is the complete, updated training script incorporating MLflow tracking, parameter logging, metric evaluation, and artifact storage:
+
+```python
+import os
+from pathlib import Path
+import joblib
+import mlflow
+import mlflow.sklearn
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
+from sklearn.model_selection import train_test_split
+
+
+def train():
+  # 1. Setup dynamic project paths
+  project_dir = Path(__file__).resolve().parents[2]
+  data_path = project_dir / "data" / "raw" / "student_placement_data.csv"
+  models_dir = project_dir / "models"
+  os.makedirs(models_dir, exist_ok=True)
+
+  print(f"Loading data from {data_path}...")
+  df = pd.read_csv(data_path)
+
+  # Identify target column dynamically or fallback
+  target_column = "placement"
+  if target_column not in df.columns:
+    possible_targets = [col for col in df.columns if "place" in col.lower()]
+    if possible_targets:
+      target_column = possible_targets[0]
+
+  X = df.drop(columns=[target_column])
+  y = df[target_column]
+
+  # 2. Train-Test Split for robust evaluation
+  X_train, X_test, y_train, y_test = train_test_split(
+      X, y, test_size=0.2, random_state=42
+  )
+
+  # 3. Setup MLflow Tracking with local SQLite store
+  db_path = project_dir / "mlflow.db"
+  mlflow.set_tracking_uri(f"sqlite:///{db_path}")
+  mlflow.set_experiment("student placement prediction")
+
+  n_estimators = 100
+  random_state = 42
+
+  # 4. Start MLflow Run
+  with mlflow.start_run():
+    print("Training RandomForest model...")
+    clf = RandomForestClassifier(
+        n_estimators=n_estimators, random_state=random_state
+    )
+    clf.fit(X_train, y_train)
+
+    # Evaluate Model
+    y_pred = clf.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    print(f"Model Training Complete! Accuracy: {accuracy:.4f}")
+
+    # Log Parameters, Metrics, and Model Artifacts to MLflow
+    mlflow.log_param("model_type", "RandomForestClassifier")
+    mlflow.log_param("n_estimators", n_estimators)
+    mlflow.log_param("random_state", random_state)
+    mlflow.log_metric("accuracy", accuracy)
+
+    # Log model artifact with trusted types handling
+    mlflow.sklearn.log_model(
+        clf, name="model", skops_trusted_types=["sklearn.tree._tree.Tree"]
+    )
+
+    # Save local copy for production FastAPI inference
+    model_save_path = models_dir / "model.pkl"
+    joblib.dump(clf, model_save_path)
+    print(f"Local model saved to {model_save_path}")
+
+
+if __name__ == "__main__":
+  train()
+```
+
+---
+
+## 🚀 Execution & UI Dashboard Workflow
+
+### Step 1: Execute the Training & Tracking Pipeline
+Run the training script from your terminal within your active virtual environment:
+```powershell
+python src\models\train_model.py
+```
+*This will execute training, record parameters/metrics into `mlflow.db`, log the model artifact, and serialize `model.pkl`.*
+
+### Step 2: Launch the MLflow Tracking Dashboard
+Start the local MLflow server referencing your SQLite backend database:
+```powershell
+mlflow ui --backend-store-uri sqlite:///mlflow.db
+```
+
+### Step 3: Explore and Compare Runs
+1. Open your web browser and navigate to: **`http://127.0.0.1:5000`**
+2. Select the **`student placement prediction`** experiment from the sidebar.
+3. Review individual run details, compare hyperparameters (`n_estimators`, `random_state`), analyze evaluation metrics (`accuracy`), and inspect the stored model artifacts.
