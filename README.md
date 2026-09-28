@@ -382,3 +382,67 @@ mlflow ui --backend-store-uri sqlite:///mlflow.db
 1. Open your web browser and navigate to: **`http://127.0.0.1:5000`**
 2. Select the **`student placement prediction`** experiment from the sidebar.
 3. Review individual run details, compare hyperparameters (`n_estimators`, `random_state`), analyze evaluation metrics (`accuracy`), and inspect the stored model artifacts.
+  ---
+
+## 🔄 Multi-Run Experiment Comparison & Automated Best Model Selection
+
+To transition from single-run tracking to a production-grade MLOps workflow, the training pipeline is upgraded to execute **multiple hyperparameter configurations**, log each variant to MLflow, and programmatically select the best-performing model using the **`MlflowClient`**.
+
+---
+
+### 🧠 How It Works
+
+1. **Parameterized Training Function**: 
+   - The training logic accepts hyperparameters (e.g., `n_estimators`, `random_state`) and a custom `run_name` as parameters, allowing it to execute iteratively across different configurations.
+2. **Systematic Tracking**: 
+   - Each run logs its parameters, evaluation metrics (`accuracy`), and model artifact independently into the local SQLite backend (`mlflow.db`).
+3. **Automated Best Model Selection (`MlflowClient`)**: 
+   - Instead of manually guessing which model is optimal, an automated query uses `MlflowClient.search_runs()` to filter the experiment, sort the runs by accuracy in descending order (`metrics.accuracy DESC`), and retrieve the top-performing run.
+4. **Production Artifact Generation**: 
+   - The best model is dynamically loaded straight from MLflow's artifact store using its unique `run_id` (`runs:/{run_id}/model`) and serialized locally to `models/model.pkl` for FastAPI inference.
+
+---
+
+### 💻 Updated Implementation Summary (`src/models/train_model.py`)
+
+```python
+from mlflow.tracking import MlflowClient
+import mlflow
+import mlflow.sklearn
+# ... other imports ...
+
+def train_model(n_estimators, random_state, run_name):
+    # Trains model, logs parameters/metrics, and records artifact under run_name
+    ...
+
+def select_and_save_best_model():
+    client = MlflowClient()
+    experiment = client.get_experiment_by_name("student placement prediction")
+    
+    # Fetch top run sorted by accuracy descending
+    runs = client.search_runs(
+        experiment_ids=[experiment.experiment_id],
+        order_by=["metrics.accuracy DESC"],
+        max_results=1
+    )
+    
+    best_run = runs[0]
+    best_run_id = best_run.info.run_id
+    
+    # Load best model from MLflow and save locally for FastAPI inference
+    model_uri = f"runs:/{best_run_id}/model"
+    best_model = mlflow.sklearn.load_model(model_uri)
+    joblib.dump(best_model, "models/model.pkl")
+
+if __name__ == "__main__":
+    configs = [
+        {"n_estimators": 50, "random_state": 42, "run_name": "RF_50_Estimators"},
+        {"n_estimators": 100, "random_state": 42, "run_name": "RF_100_Estimators"},
+        {"n_estimators": 200, "random_state": 42, "run_name": "RF_200_Estimators"},
+    ]
+    for config in configs:
+        train_model(**config)
+    
+    select_and_save_best_model()
+
+
