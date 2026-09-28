@@ -446,3 +446,15 @@ if __name__ == "__main__":
     select_and_save_best_model()
 
 
+```
+---
+###📊 Visualizing and Comparing Runs in MLflow UI
+##Run the multi-run script:
+python src/models/train_model.py
+##Launch the dashbaord
+mlflow ui --backend-store-uri sqlite:///mlflow.db
+Launch the dashboard:
+
+Bash
+mlflow ui --backend-store-uri sqlite:///mlflow.db
+Open http://127.0.0.1:5000, select your experiment, and use the UI side-by-side comparison feature to analyze how varying the n_estimators parameter impacts model accuracy.
